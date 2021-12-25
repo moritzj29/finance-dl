@@ -126,9 +126,10 @@ def is_displayed(element):
 
 
 class Scraper(object):
-    def __init__(self, download_dir=None, connect=None, chromedriver_bin='finance-dl-chromedriver-wrapper',
+    def __init__(self, download_dir=None, connect=None, connect_remote=None,
+                 chromedriver_bin='finance-dl-chromedriver-wrapper',
                  headless=True, use_seleniumrequests=False, session_id=None, profile_dir=None,
-                 capture_network_requests=False):
+                 capture_network_requests=False, chromedriver_args=[]):
 
         self.download_dir = download_dir
 
@@ -157,6 +158,8 @@ class Scraper(object):
             'test-type',
         ])
         chrome_options.add_argument('--no-sandbox')
+        for arg in chromedriver_args:
+            chrome_options.add_argument(arg)
         if profile_dir is not None:
             chrome_options.add_argument('user-data-dir=%s' % profile_dir)
             if not os.path.exists(profile_dir):
@@ -175,12 +178,18 @@ class Scraper(object):
             driver_class = seleniumrequests.Chrome
         else:
             driver_class = webdriver.Chrome
-        self.driver = driver_class(
-            executable_path=self.chromedriver_bin,
-            chrome_options=chrome_options,
-            desired_capabilities=caps,
-            service_args=service_args,
-        )
+        
+        if connect_remote is not None:
+            # connect to remote webdriver, e.g. standalone Docker container
+            # https://stackoverflow.com/questions/45323271/how-to-run-selenium-with-chrome-in-docker
+            self.driver = webdriver.Remote(connect_remote, options=chrome_options)
+        else:
+            self.driver = driver_class(
+                executable_path=self.chromedriver_bin,
+                chrome_options=chrome_options,
+                desired_capabilities=caps,
+                service_args=service_args,
+            )
         print(' --connect=%s --session-id=%s' %
               (self.driver.command_executor._url, self.driver.session_id))
         signal.signal(signal.SIGINT, original_sigint_handler)
