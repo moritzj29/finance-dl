@@ -22,7 +22,8 @@ The following keys may be specified as part of the configuration dict:
   scheme.
 
 - `amazon_domain`: Optional.  Specifies the Amazon domain from which to download
-  orders.  Must be one of `'.com'` or `'.co.cuk'`.  Defaults to `'.com'`.
+  orders.  Must be one of `'.com'`, `'.co.cuk'` or `'.de'`.  Defaults to
+  `'.com'`.
 
 - `regular`: Optional.  Must be a `bool`.  If `True` (the default), download regular orders.
 
@@ -71,40 +72,134 @@ Interactive shell:
 From the interactive shell, type: `self.run()` to start the scraper.
 
 """
-
+import dataclasses
 import urllib.parse
 import re
 import logging
 import os
+import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.keys import Keys
 from atomicwrites import atomic_write
 from . import scrape_lib
+from typing import List, Optional
 
 logger = logging.getLogger('amazon_scrape')
 
 
+@dataclasses.dataclass
 class Domain:
-    COM = 'com'
-    CO_UK = 'co.uk'
+  top_level: str
+
+  sign_in: str
+  sign_out: str
+
+  # Find invoices.
+  your_orders: str
+  invoice: str
+  invoice_link: List[str]
+  order_summary: str
+  next: str
+
+  # Confirm invoice page
+  grand_total: str
+  grand_total_digital: str
+  order_cancelled: str
+
+  digital_orders: bool
+  digital_orders_text: Optional[str] = None
+  fresh_fallback: Optional[str] = None
+
+
+DOT_COM = Domain(
+  top_level='com',
+  sign_in='Sign In',
+  sign_out='Sign Out',
+
+  your_orders='Your Orders',
+  invoice='Invoice',
+  invoice_link=["View order", "View invoice"],
+  # View invoice -> regular/digital order, View order -> Amazon Fresh
+  fresh_fallback="View order",
+  order_summary='Order Summary',
+  next='Next',
+
+  grand_total='Grand Total:',
+  grand_total_digital='Grand Total:',
+  order_cancelled='Order Canceled',
+
+  digital_orders=True,
+  digital_orders_text='Digital Orders',
+)
+
+DOT_CO_UK = Domain(
+  top_level='co.uk',
+  sign_in='Sign in',
+  sign_out='Sign out',
+
+  your_orders='Your Orders',
+  invoice='Invoice',
+  invoice_link=["View order", "View invoice"],
+  # View invoice -> regular/digital order, View order -> Amazon Fresh
+  fresh_fallback="View order",
+  order_summary='Order Summary',
+  next='Next',
+
+  grand_total='Grand Total:',
+  grand_total_digital='Grand Total:',
+  order_cancelled='Order Canceled',
+
+  digital_orders=False,
+)
+
+DOT_DE = Domain(
+  top_level='de',
+  sign_in='Hallo, Anmelden',
+  sign_out='Abmelden',
+
+  your_orders='Meine Bestellungen',
+  invoice='Rechnung',
+  invoice_link=["Bestelldetails anzeigen"],
+  fresh_fallback=None,
+  order_summary='Bestellübersicht',
+  next='Weiter',
+
+  grand_total='Gesamtsumme:',
+  grand_total_digital='Endsumme:',
+  order_cancelled='Order Canceled',
+
+  digital_orders=False,
+)
+
+DOMAINS = {"." + x.top_level: x for x in [DOT_COM, DOT_CO_UK, DOT_DE]}
 
 
 class Scraper(scrape_lib.Scraper):
-    def __init__(self, credentials, output_directory, dir_per_year=False, amazon_domain=Domain.COM, regular=True, digital=None, order_groups=None, **kwargs):
+    def __init__(self,
+                 credentials,
+                 output_directory,
+                 dir_per_year=False,
+                 amazon_domain: str = ".com",
+                 regular: bool = True,
+                 digital: Optional[bool] = None,
+                 order_groups: Optional[List[str]] = None,
+                 **kwargs):
         super().__init__(**kwargs)
-        default_digital = True if amazon_domain == Domain.COM else False
+        if amazon_domain not in DOMAINS:
+          raise ValueError(f"Domain '{amazon_domain} not supported. Supported "
+                           f"domains: {list(DOMAINS)}")
+        self.domain = DOMAINS[amazon_domain]
         self.credentials = credentials
         self.output_directory = output_directory
         self.dir_per_year = dir_per_year
         self.logged_in = False
-        self.amazon_domain = amazon_domain
         self.regular = regular
-        self.digital = digital if digital is not None else default_digital
+        self.digital = digital if digital is not None else self.domain.digital_orders
         self.order_groups = order_groups
 
     def check_url(self, url):
-        netloc_re = r'^([^\.@]+\.)*amazon.' + self.amazon_domain + '$'
+        netloc_re = r'^([^\.@]+\.)*amazon.' + self.domain.top_level + '$'
         result = urllib.parse.urlparse(url)
         if result.scheme != 'https' or not re.fullmatch(netloc_re, result.netloc):
             raise RuntimeError('Reached invalid URL: %r' % url)
@@ -114,11 +209,11 @@ class Scraper(scrape_lib.Scraper):
 
     def login(self):
         logger.info('Initiating log in')
-        self.driver.get('https://www.amazon.' + self.amazon_domain)
+        self.driver.get('https://www.amazon.' + self.domain.top_level)
         if self.logged_in:
             return
 
-        sign_out_links = self.find_elements_by_descendant_partial_text('Sign Out', 'a')
+        sign_out_links = self.find_elements_by_descendant_partial_text(self.domain.sign_out, 'a')
         if len(sign_out_links) > 0:
             logger.info('You must be already logged in!')
             self.logged_in = True
@@ -126,7 +221,7 @@ class Scraper(scrape_lib.Scraper):
 
         logger.info('Looking for sign-in link')
         sign_in_links, = self.wait_and_return(
-            lambda: self.find_visible_elements_by_descendant_partial_text('Sign in', 'a')
+            lambda: self.find_visible_elements_by_descendant_partial_text(self.domain.sign_in, 'a')
         )
 
         self.click(sign_in_links[0])
@@ -163,6 +258,13 @@ class Scraper(scrape_lib.Scraper):
             return os.path.join(self.output_directory, year, order_id + '.html')
         return os.path.join(self.output_directory, order_id + '.html')
 
+    def get_order_id(self, href) -> str:
+        m = re.match('.*[&?]orderID=((?:D)?[0-9\\-]+)(?:&.*)?$', href)
+        if m is None:
+            raise RuntimeError(
+                'Failed to parse order ID from href %r' % (href, ))
+        return m[1]
+
     def get_orders(self, regular=True, digital=True):
         invoice_hrefs = []
         order_ids_seen = set()
@@ -189,16 +291,16 @@ class Scraper(scrape_lib.Scraper):
                 order_ids = set()
                 for invoice_link in invoices:
                     # Amazon Fresh, and regular orders respectively
-                    if invoice_link.text not in ("View order", "View invoice"):
-                        # View invoice -> regular/digital order, View order -> Amazon Fresh
+                    if invoice_link.text not in self.domain.invoice_link:
+                        # skip invoice if label is not known
+                        # different labels are possible e.g. for regular orders vs. Amazon fresh
+                        logger.info(
+                            'Skipping invoice due to unknown invoice_link.text: %s',
+                            invoice_link.text)
                         continue
 
                     href = invoice_link.get_attribute('href')
-                    m = re.match('.*[&?]orderID=((?:D)?[0-9\\-]+)(?:&.*)?$', href)
-                    if m is None:
-                        raise RuntimeError(
-                            'Failed to parse order ID from href %r' % (href, ))
-                    order_id = m[1]
+                    order_id = self.get_order_id(href)
                     if order_id in order_ids:
                         continue
                     order_ids.add(order_id)
@@ -210,7 +312,7 @@ class Scraper(scrape_lib.Scraper):
                         logger.info('Skipping already-downloaded invoice: %r',
                                     order_id)
                         continue
-                    if invoice_link.text == "View order":
+                    if self.domain.fresh_fallback is not None and invoice_link.text == self.domain.fresh_fallback:
                         # Amazon Fresh order, construct link to invoice
                         logger.info("   Found likely Amazon Fresh order. Falling back to direct invoice URL.")
                         tokens = href.split("/")
@@ -218,18 +320,20 @@ class Scraper(scrape_lib.Scraper):
                         tokens[-1] = f"gp/css/summary/print.html?orderID={order_id}"
                         href = "/".join(tokens)
 
+                    logger.info('Found order \'{}\''.format(order_id))
                     invoice_hrefs.append((href, order_id))
                     order_ids_seen.add(order_id)
 
                 # Find next link
                 next_links = self.find_elements_by_descendant_text_match(
-                    '. = "Next"', 'a', only_displayed=True)
+                    f'. = "{self.domain.next}"', 'a', only_displayed=True)
                 if len(next_links) == 0:
                     logger.info('Found no more pages')
                     break
                 if len(next_links) != 1:
                     raise RuntimeError('More than one next link found')
                 with self.wait_for_page_load():
+                    logging.info("Next page.")
                     self.click(next_links[0])
 
         def retrieve_all_order_groups():
@@ -258,10 +362,9 @@ class Scraper(scrape_lib.Scraper):
                         order_select.select_by_index(order_select_index - 1)
                 get_invoice_urls()
 
-        orders_text = "Your Orders" if self.amazon_domain == Domain.CO_UK else "Orders"
         # on co.uk, orders link is hidden behind the menu, hence not directly clickable
         (orders_link,), = self.wait_and_return(
-            lambda: self.find_elements_by_descendant_text_match('. = "{}"'.format(orders_text), 'a', only_displayed=False)
+            lambda: self.find_elements_by_descendant_text_match(f'. = "{self.domain.your_orders}"', 'a', only_displayed=False)
         )
         link = orders_link.get_attribute('href')
         scrape_lib.retry(lambda: self.driver.get(link), retry_delay=2)
@@ -271,7 +374,7 @@ class Scraper(scrape_lib.Scraper):
 
         if digital:
             (digital_orders_link,), = self.wait_and_return(
-                lambda: self.find_elements_by_descendant_text_match('contains(., "Digital Orders")', 'a', only_displayed=True)
+                lambda: self.find_elements_by_descendant_text_match(f'contains(., "{self.domain.digital_orders_text}")', 'a', only_displayed=True)
             )
             scrape_lib.retry(lambda: self.click(digital_orders_link),
                              retry_delay=2)
@@ -289,7 +392,11 @@ class Scraper(scrape_lib.Scraper):
             # Wait until it is all generated.
             def get_source():
                 source = self.driver.page_source
-                if 'Grand Total:' in source or 'Order Canceled' in source:
+                if (
+                    self.domain.grand_total in source or
+                    self.domain.grand_total_digital in source or
+                    self.domain.order_cancelled in source
+                ):
                     return source
                 elif 'problem loading this order' in source:
                     raise ValueError(f'Failed to retrieve information for order {order_id}')
@@ -301,6 +408,10 @@ class Scraper(scrape_lib.Scraper):
             page_source, = self.wait_and_return(get_source)
             if order_id not in page_source:
                 raise ValueError(f'Failed to retrieve information for order {order_id}')
+            # extract date
+            # needs some work
+            # DE: Bestellung aufgegeben am: Getätigte Spar-Abo Bestellung:
+            # DE digital: Digitale Bestellung, kein </b> dazwischen
             m = re.search('(?:Digital Order: |Order Placed: *\n *</b>\n) *[A-Za-z]* \d+, (\d{4})',
                          page_source)
             order_date = m[1] if m else None
