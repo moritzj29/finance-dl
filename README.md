@@ -72,6 +72,11 @@ or for development:
 ```shell
 pip install -e .
 ```
+`finance-dl` is based on the `selenium` framework (v3) to automatically scrape the data from supported websites.
+To function correctly, a working Google Chrome browser and the matching `chromedriver` needs to be installed and available in `$PATH`.
+
+It is also possible to run `finance-dl` and the required Google Chrome browser completely within docker. Check out the [documentantion section on docker](#Docker).
+
 
 Configuration
 ==
@@ -137,6 +142,68 @@ then all specified configurations are run in parallel.
 To update all configurations, run:
 
     python -m finance_dl.update --config-module example_finance_dl_config --log-dir logs update --all
+
+Docker
+==
+It is possible to run `finance-dl` completely within docker, so no software needs to be installed (except docker of course). Check this example `docker-compose.yml`:
+
+```yml
+version: "3"
+
+services:
+  finance_dl:
+    container_name: finance_dl
+    build: .
+    volumes:
+      # workspace contains Downloads folder
+      - ./:/workspace
+    # forever running entrypoint command, otherwise conatiner shuts down immediately
+    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+
+  standalonechrome:
+    container_name: standalonechrome
+    image: docker.io/selenium/standalone-chrome:local
+    volumes:
+      # working directory is / therefore mount at /Downloads
+      - ./Downloads:/Downloads
+      - ./.cache:/Cache
+    expose:
+      - 4444
+    # increased size of shared memory required
+    shm_size: '2gb'
+```
+
+The package depends on [`selenium` version 3](https://github.com/SeleniumHQ/docker-selenium/tree/selenium-3), therefore be sure to use v3 docker images. These are not updated with current Google Chrome releases anymore, but it is straightforward to build the image yourself:
+
+- download the [latest `selenium` Docker code from the version 3 branch](https://github.com/SeleniumHQ/docker-selenium/tree/selenium-3)
+- from within the directory build a custom local image with your desired Google Chrome and `chromedriver` version by setting the appropriate `BUILD_ARGS`, e.g.
+
+
+```shell
+$ VERSION=local BUILD_ARGS="--build-arg CHROME_VERSION=google-chrome-stable=96.0.4664.110-1 --build-arg CHROME_DRIVER_VERSION=96.0.4664.45" make standalone_chrome
+```
+
+- check the name of the resulting image, e.g. `docker.io/selenium/standalone-chrome:local` and update the `docker-compose.yml` accordingly
+- for more detailed information on the available options refer to the selenium Docker documentation
+
+Make sure to add the following options to all your `CONFIG_`s:
+```python
+{
+  ...,
+  # use remote browser in separate container
+  # hostname = container_name in docker-compose
+  connect_remote="http://standalonechrome:4444/wd/hub",
+  # GPU needs to be disabled when Chrome is run in docker
+  chromedriver_args=['--disable-gpu']
+}
+```
+Also the `data_dir` needs to be available in both containers under the same relative path. In the above example the `Downloads` directory is a subdirectory of `workspace`:
+```
+|- workspace
+    |- Downloads
+    |- finance_dl_config.py
+```
+
 
 License
 ==
