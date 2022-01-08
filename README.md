@@ -176,11 +176,14 @@ services:
 The package depends on [`selenium` version 3](https://github.com/SeleniumHQ/docker-selenium/tree/selenium-3), therefore be sure to use v3 docker images. These are not updated with current Google Chrome releases anymore, but it is straightforward to build the image yourself:
 
 - download the [latest `selenium` Docker code from the version 3 branch](https://github.com/SeleniumHQ/docker-selenium/tree/selenium-3)
-- from within the directory build a custom local image with your desired Google Chrome and `chromedriver` version by setting the appropriate `BUILD_ARGS`, e.g.
-
+  
+- from within the `selenium-3` root directory build a custom local image explicitly setting the Google Chrome and `chromedriver` version by setting the appropriate `BUILD_ARGS`:
+  - Find the latest `google-chrome-stable` version available in the [package repository](https://www.ubuntuupdates.org/package/google_chrome/stable/main/base/google-chrome-stable). Please note, that Google only keeps the latest version in the repository. Choosing older versions will not work out of the box.
+  - Find the matching `chromedriver` [version](https://chromedriver.chromium.org/downloads)
+  - Building on ARM (e.g. Apple Silicon M1) requires the platform to be set explicitly to `--platform=linux/amd64`
 
 ```shell
-$ VERSION=local BUILD_ARGS="--build-arg CHROME_VERSION=google-chrome-stable=96.0.4664.110-1 --build-arg CHROME_DRIVER_VERSION=96.0.4664.45" make standalone_chrome
+$ VERSION=local BUILD_ARGS="--build-arg CHROME_VERSION=google-chrome-stable=97.0.4692.71-1 --build-arg CHROME_DRIVER_VERSION=97.0.4692.71 --platform=linux/amd64" make standalone_chrome
 ```
 
 - check the name of the resulting image, e.g. `docker.io/selenium/standalone-chrome:local` and update the `docker-compose.yml` accordingly
