@@ -55,7 +55,8 @@ from . import paypal
 logger = logging.getLogger('paypal_otp')
 
 class Scraper(paypal.Scraper):
-    def __init__(self, credentials: dict, output_directory: str, **kwargs):
+    def __init__(self, credentials: dict, output_directory: str, 
+                 chromedriver_args=[], **kwargs):
         # based on:
         # https://stackoverflow.com/a/69464060
         # selenium sends a "headless" hint in its User-Agent field
@@ -69,9 +70,11 @@ class Scraper(paypal.Scraper):
         )
         customUserAgent = header.generate()['User-Agent']
 
+        chromedriver_args.append(f"user-agent={customUserAgent}")
+
         super().__init__(
             credentials, output_directory,
-            chromedriver_args=[f"user-agent={customUserAgent}"], 
+            chromedriver_args=chromedriver_args, 
             **kwargs)
 
     def login(self):
