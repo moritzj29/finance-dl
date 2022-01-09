@@ -47,6 +47,7 @@ import logging
 import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import StaleElementReferenceException
 from fake_headers import Headers
 from . import scrape_lib
 from . import paypal
@@ -107,11 +108,24 @@ class Scraper(paypal.Scraper):
             (By.ID, 'otpCode'), 
             only_displayed=True)
         logger.info('Entering OTP')
-        totp.send_keys(self.credentials['otp']())
-
+        # send every digit individually and relocate the field in between
+        # page gets refreshed automaitcally and field objects go stale
+        for i in self.credentials['otp']():
+            totp.send_keys(i)
+            totp, = self.wait_and_locate(
+                (By.ID, 'otpCode'), 
+                only_displayed=True)
         logger.info('Send Enter')
+        # totp.send_keys(Keys.ENTER)
         with self.wait_for_page_load():
-            totp.send_keys(Keys.ENTER)
+            try:
+                totp.send_keys(Keys.ENTER)
+            except StaleElementReferenceException:
+                totp, = self.wait_and_locate(
+                    #(By.XPATH, '//input[@type="tel"]'),
+                    (By.ID, 'otpCode'), 
+                    only_displayed=True)
+                totp.send_keys(Keys.ENTER)
         # end OTP code
         logger.info('Logged in')
         self.logged_in = True
