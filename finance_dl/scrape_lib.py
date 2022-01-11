@@ -128,7 +128,9 @@ def is_displayed(element):
 class Scraper(object):
     def __init__(self, download_dir=None, connect=None, connect_remote=None,
                  chromedriver_bin='finance-dl-chromedriver-wrapper',
-                 headless=True, use_seleniumrequests=False, session_id=None, profile_dir=None,
+                 headless=True,
+                 use_seleniumrequests=False, requests_proxy_host='127.0.0.1',
+                 session_id=None, profile_dir=None,
                  capture_network_requests=False, chromedriver_args=[]):
 
         self.download_dir = download_dir
@@ -174,22 +176,30 @@ class Scraper(object):
         chrome_options.add_experimental_option('prefs', prefs)
         if headless:
             chrome_options.add_argument('headless')
-        if use_seleniumrequests:
-            driver_class = seleniumrequests.Chrome
-        else:
-            driver_class = webdriver.Chrome
-        
-        if connect_remote is not None:
-            # connect to remote webdriver, e.g. standalone Docker container
-            # https://stackoverflow.com/questions/45323271/how-to-run-selenium-with-chrome-in-docker
-            self.driver = webdriver.Remote(connect_remote, options=chrome_options)
-        else:
+
+        if connect_remote is None:
+            if use_seleniumrequests:
+                driver_class = seleniumrequests.Chrome
+            else:
+                driver_class = webdriver.Chrome
             self.driver = driver_class(
                 executable_path=self.chromedriver_bin,
                 chrome_options=chrome_options,
                 desired_capabilities=caps,
                 service_args=service_args,
-            )
+                )
+        else:
+            # connect to remote webdriver, e.g. standalone Docker container
+            # https://stackoverflow.com/questions/45323271/how-to-run-selenium-with-chrome-in-docker
+            if use_seleniumrequests:
+                self.driver = seleniumrequests.Remote(
+                    connect_remote, options=chrome_options,
+                    proxy_host=requests_proxy_host
+                    )
+            else:
+                self.driver = webdriver.Remote(
+                    connect_remote, options=chrome_options)
+        
         print(' --connect=%s --session-id=%s' %
               (self.driver.command_executor._url, self.driver.session_id))
         signal.signal(signal.SIGINT, original_sigint_handler)
