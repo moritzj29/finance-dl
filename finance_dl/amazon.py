@@ -294,9 +294,11 @@ class Scraper(scrape_lib.Scraper):
                     if invoice_link.text not in self.domain.invoice_link:
                         # skip invoice if label is not known
                         # different labels are possible e.g. for regular orders vs. Amazon fresh
-                        logger.info(
-                            'Skipping invoice due to unknown invoice_link.text: %s',
-                            invoice_link.text)
+                        if invoice_link.text != "":
+                            # log non-empty link texts -> may be new type
+                            logger.info(
+                                'Skipping invoice due to unknown invoice_link.text: %s',
+                                invoice_link.text)
                         continue
 
                     href = invoice_link.get_attribute('href')
