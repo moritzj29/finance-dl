@@ -1,0 +1,3 @@
+[submodule "Selenium-Requests"]
+	path = Selenium-Requests
+	url = https://github.com/cryzed/Selenium-Requests
