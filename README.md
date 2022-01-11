@@ -196,6 +196,9 @@ Make sure to add the following options to all your `CONFIG_`s:
   # use remote browser in separate container
   # hostname = container_name in docker-compose
   connect_remote="http://standalonechrome:4444/wd/hub",
+  # if using scraper which requires selenium requests, e.g. Paypal
+  # set hostname/IP of container running finance-dl
+  requests_proxy_host="finance_dl"
   # GPU needs to be disabled when Chrome is run in docker
   chromedriver_args=['--disable-gpu']
 }
