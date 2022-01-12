@@ -409,12 +409,6 @@ class Scraper(scrape_lib.Scraper):
                         order_select.select_by_index(order_select_index - 1)
                 get_invoice_urls()
 
-        # on co.uk, orders link is hidden behind the menu, hence not directly clickable
-        (orders_link,), = self.wait_and_return(
-            lambda: self.find_elements_by_descendant_text_match(f'. = "{self.domain.your_orders}"', 'a', only_displayed=False)
-        )
-        link = orders_link.get_attribute('href')
-        scrape_lib.retry(lambda: self.driver.get(link), retry_delay=2)
         if regular:
             # on co.uk, orders link is hidden behind the menu, hence not directly clickable
             (orders_link,), = self.wait_and_return(
