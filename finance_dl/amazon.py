@@ -94,6 +94,7 @@ class Domain:
   invoice: str
   invoice_link: List[str]
   order_summary: str
+  order_summary_hidden: bool
   next: str
 
   # Confirm invoice page
@@ -116,6 +117,7 @@ DOT_COM = Domain(
   # View invoice -> regular/digital order, View order -> Amazon Fresh
   fresh_fallback="View order",
   order_summary='Order Summary',
+  order_summary_hidden=False,
   next='Next',
 
   grand_total='Grand Total:',
@@ -136,6 +138,7 @@ DOT_CO_UK = Domain(
   # View invoice -> regular/digital order, View order -> Amazon Fresh
   fresh_fallback="View order",
   order_summary='Order Summary',
+  order_summary_hidden=False,
   next='Next',
 
   grand_total='Grand Total:',
@@ -154,6 +157,7 @@ DOT_DE = Domain(
   invoice_link=["Bestelldetails anzeigen"],
   fresh_fallback=None,
   order_summary='Bestellübersicht',
+  order_summary_hidden=True,
   next='Weiter',
 
   grand_total='Gesamtsumme:',
@@ -253,18 +257,40 @@ class Scraper(scrape_lib.Scraper):
         def get_invoice_urls():
             initial_iteration = True
             while True:
+                # break when there is no "next page"
+
+                # Problem: different site structures depending on country
+                
+                # .com / .uk
+                # Order Summary buttons are directly visible and can be
+                # identified with href containing "orderID="
+                # but order summary may have different names, e.g. for Amazon Fresh orders
+                
+                # .de
+                # only link with href containing "orderID=" is "Bestelldetails anzeigen" (=Order Details)
+                # which is not helpful
+                # order summary is hidden behind submenu which requires a click to be visible
 
                 def invoice_finder():
-                    return self.driver.find_elements(By.XPATH, '//a[contains(@href, "orderID=")]')
-
+                    if not self.domain.order_summary_hidden:
+                        # order summary link is visible on page
+                        return self.driver.find_elements(
+                            By.XPATH, '//a[contains(@href, "orderID=")]')
+                    else:
+                        # order summary link is hidden in submenu for each order
+                        elements = self.driver.find_elements_by_xpath(
+                            '//a[@class="a-popover-trigger a-declarative"]')
+                        return [a for a in elements if a.text == self.domain.invoice]
+                
                 if initial_iteration:
                     invoices = invoice_finder()
                 else:
                     invoices, = self.wait_and_return(invoice_finder)
                 initial_iteration = False
 
-                order_ids = set()
-                for invoice_link in invoices:
+                last_order_id = None
+
+                def invoice_link_finder(invoice_link):
                     if invoice_link.text not in self.domain.invoice_link:
                         # skip invoice if label is not known
                         # different labels are possible e.g. for regular orders vs. Amazon fresh
@@ -273,22 +299,14 @@ class Scraper(scrape_lib.Scraper):
                             logger.info(
                                 'Skipping invoice due to unknown invoice_link.text: %s',
                                 invoice_link.text)
-                        continue
-
+                        return (False, False)
                     href = invoice_link.get_attribute('href')
                     order_id = self.get_order_id(href)
-                    if order_id in order_ids:
-                        continue
-                    order_ids.add(order_id)
-                    invoice_path = self.get_invoice_path(order_id)
                     if order_id in order_ids_seen:
                         logger.info('Skipping already-seen order id: %r',
                                     order_id)
-                        continue
-                    if os.path.exists(invoice_path):
-                        logger.info('Skipping already-downloaded invoice: %r',
-                                    order_id)
-                        continue
+                        return (False, False)
+                    order_ids_seen.add(order_id)
                     if self.domain.fresh_fallback is not None and invoice_link.text == self.domain.fresh_fallback:
                         # Amazon Fresh order, construct link to invoice
                         logger.info("   Found likely Amazon Fresh order. Falling back to direct invoice URL.")
@@ -296,10 +314,32 @@ class Scraper(scrape_lib.Scraper):
                         tokens = tokens[:4]
                         tokens[-1] = f"gp/css/summary/print.html?orderID={order_id}"
                         href = "/".join(tokens)
+                    return (order_id, href)
 
-                    logger.info('Found order \'{}\''.format(order_id))
-                    invoice_hrefs.append((href, order_id))
-                    order_ids_seen.add(order_id)
+                def invoice_link_finder_hidden():
+                        # submenu containing order summary takes some time to load after click
+                        # search for order summary link and compare order_id
+                        # repeat until order_id is different to last order_id
+                        summary_links = self.driver.find_elements_by_link_text(
+                            self.domain.order_summary)
+                        if summary_links:
+                            href = summary_links[0].get_attribute('href')
+                            order_id = self.get_order_id(href)
+                            if order_id != last_order_id:
+                                return (order_id, href)
+                        return False
+
+                for invoice_link in invoices:
+                    if not self.domain.order_summary_hidden:
+                        (order_id, href) = invoice_link_finder(invoice_link)
+                    else:
+                        invoice_link.click()
+                        (order_id, href), = self.wait_and_return(invoice_link_finder_hidden)
+                    if order_id:
+                        logger.info('Found order \'{}\''.format(order_id))
+                        invoice_hrefs.append((href, order_id))
+                        order_ids_seen.add(order_id)
+                        last_order_id = order_id
 
                 # Find next link
                 next_links = self.find_elements_by_descendant_text_match(
@@ -362,6 +402,10 @@ class Scraper(scrape_lib.Scraper):
     def retrieve_invoices(self, invoice_hrefs):
         for href, order_id in invoice_hrefs:
             invoice_path = self.get_invoice_path(order_id)
+            if os.path.exists(invoice_path):
+                logger.info('Skipping already-downloaded invoice: %r',
+                             order_id)
+                continue
 
             logger.info('Downloading invoice for order %r (link: %s)', order_id, href)
             with self.wait_for_page_load():
