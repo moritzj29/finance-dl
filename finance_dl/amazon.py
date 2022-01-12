@@ -302,11 +302,6 @@ class Scraper(scrape_lib.Scraper):
                         return (False, False)
                     href = invoice_link.get_attribute('href')
                     order_id = self.get_order_id(href)
-                    if order_id in order_ids_seen:
-                        logger.info('Skipping already-seen order id: %r',
-                                    order_id)
-                        return (False, False)
-                    order_ids_seen.add(order_id)
                     if self.domain.fresh_fallback is not None and invoice_link.text == self.domain.fresh_fallback:
                         # Amazon Fresh order, construct link to invoice
                         logger.info("   Found likely Amazon Fresh order. Falling back to direct invoice URL.")
@@ -336,6 +331,10 @@ class Scraper(scrape_lib.Scraper):
                         invoice_link.click()
                         (order_id, href), = self.wait_and_return(invoice_link_finder_hidden)
                     if order_id:
+                        if order_id in order_ids_seen:
+                            logger.info('Skipping already-seen order id: %r',
+                                        order_id)
+                            continue
                         logger.info('Found order \'{}\''.format(order_id))
                         invoice_hrefs.append((href, order_id))
                         order_ids_seen.add(order_id)
