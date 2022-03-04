@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - 'main'
+  # make it possible to manually trigger workflow
+  workflow_dispatch:
 
 jobs:
   docker:
