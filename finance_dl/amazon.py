@@ -15,6 +15,12 @@ The following keys may be specified as part of the configuration dict:
   local filesystem where the output will be written.  If the directory does not
   exist, it will be created.
 
+- `dir_per_year`: Optional. If true (default is false), adds one subdirectory
+  to the output for each year's worth of transactions. Useful for filesystems
+  that struggle with very large directories. Probably not that useful for
+  actually finding anything, given the uselessness of Amazon's order ID
+  scheme.
+
 - `amazon_domain`: Optional.  Specifies the Amazon domain from which to download
   orders.  Must be one of `'.com'`, `'.co.cuk'` or `'.de'`.  Defaults to
   `'.com'`.
@@ -100,6 +106,7 @@ class Domain:
   # Confirm invoice page
   grand_total: str
   grand_total_digital: str
+  order_cancelled: str
 
   digital_orders: bool
   digital_orders_text: Optional[str] = None
@@ -122,6 +129,7 @@ DOT_COM = Domain(
 
   grand_total='Grand Total:',
   grand_total_digital='Grand Total:',
+  order_cancelled='Order Canceled',
 
   digital_orders=True,
   digital_orders_text='Digital Orders',
@@ -143,6 +151,7 @@ DOT_CO_UK = Domain(
 
   grand_total='Grand Total:',
   grand_total_digital='Grand Total:',
+  order_cancelled='Order Canceled',
 
   digital_orders=False,
 )
@@ -162,6 +171,8 @@ DOT_DE = Domain(
 
   grand_total='Gesamtsumme:',
   grand_total_digital='Endsumme:',
+  order_cancelled='Order Canceled',
+
   digital_orders=False,
 )
 
@@ -172,6 +183,7 @@ class Scraper(scrape_lib.Scraper):
     def __init__(self,
                  credentials,
                  output_directory,
+                 dir_per_year=False,
                  amazon_domain: str = ".com",
                  regular: bool = True,
                  digital: Optional[bool] = None,
@@ -184,6 +196,7 @@ class Scraper(scrape_lib.Scraper):
         self.domain = DOMAINS[amazon_domain]
         self.credentials = credentials
         self.output_directory = output_directory
+        self.dir_per_year = dir_per_year
         self.logged_in = False
         self.regular = regular
         self.digital = digital if digital is not None else self.domain.digital_orders
@@ -223,6 +236,9 @@ class Scraper(scrape_lib.Scraper):
         username.send_keys(self.credentials['username'])
         username.send_keys(Keys.ENTER)
 
+        self.finish_login()
+
+    def finish_login(self):
         logger.info('Looking for password link')
         (password, ), = self.wait_and_return(
             lambda: self.find_visible_elements(By.XPATH, '//input[@type="password"]')
@@ -235,12 +251,15 @@ class Scraper(scrape_lib.Scraper):
         )
         rememberMe.click()
 
-        password.send_keys(Keys.ENTER)
+        with self.wait_for_page_load():
+            password.send_keys(Keys.ENTER)
 
         logger.info('Logged in')
         self.logged_in = True
 
-    def get_invoice_path(self, order_id):
+    def get_invoice_path(self, year, order_id):
+        if self.dir_per_year:
+            return os.path.join(self.output_directory, year, order_id + '.html')
         return os.path.join(self.output_directory, order_id + '.html')
 
     def get_order_id(self, href) -> str:
@@ -253,6 +272,12 @@ class Scraper(scrape_lib.Scraper):
     def get_orders(self, regular=True, digital=True):
         invoice_hrefs = []
         order_ids_seen = set()
+        order_ids_downloaded = frozenset([
+            name[:len(name)-5]
+            for _, _, files in os.walk(self.output_directory)
+            for name in files
+            if name.endswith('.html')
+        ])
 
         def get_invoice_urls():
             initial_iteration = True
@@ -332,8 +357,12 @@ class Scraper(scrape_lib.Scraper):
                         (order_id, href), = self.wait_and_return(invoice_link_finder_hidden)
                     if order_id:
                         if order_id in order_ids_seen:
-                            logger.info('Skipping already-seen order id: %r',
-                                        order_id)
+                        logger.info('Skipping already-seen order id: %r',
+                                    order_id)
+                            continue
+                        if order_id in order_ids_downloaded:
+                            logger.info('Skipping already-downloaded invoice: %r',
+                                    order_id)
                             continue
                         logger.info('Found order \'{}\''.format(order_id))
                         invoice_hrefs.append((href, order_id))
@@ -400,13 +429,12 @@ class Scraper(scrape_lib.Scraper):
 
     def retrieve_invoices(self, invoice_hrefs):
         for href, order_id in invoice_hrefs:
-            invoice_path = self.get_invoice_path(order_id)
-            if os.path.exists(invoice_path):
-                logger.info('Skipping already-downloaded invoice: %r',
-                             order_id)
-                continue
-
-            logger.info('Downloading invoice for order %r (link: %s)', order_id, href)
+            # Todo: check if invoice already present
+            # if os.path.exists(invoice_path):
+            #     logger.info('Skipping already-downloaded invoice: %r',
+            #                  order_id)
+            #     continue
+            logger.info('Downloading invoice for order %r', order_id)
             with self.wait_for_page_load():
                 self.driver.get(href)
 
@@ -414,17 +442,37 @@ class Scraper(scrape_lib.Scraper):
             # Wait until it is all generated.
             def get_source():
                 source = self.driver.page_source
-                if self.domain.grand_total in source or self.domain.grand_total_digital in source:
+                if (
+                    self.domain.grand_total in source or
+                    self.domain.grand_total_digital in source or
+                    self.domain.order_cancelled in source
+                ):
                     return source
+                elif 'problem loading this order' in source:
+                    raise ValueError(f'Failed to retrieve information for order {order_id}')
+                elif self.find_visible_elements(By.XPATH, '//input[@type="password"]'):
+                    self.finish_login() # fallthrough
+
                 return None
 
             page_source, = self.wait_and_return(get_source)
             if order_id not in page_source:
-                raise ValueError('Failed to retrieve information for order %r'
-                                 % (order_id, ))
+                raise ValueError(f'Failed to retrieve information for order {order_id}')
+            # extract date
+            # needs some work
+            # DE: Bestellung aufgegeben am: Getätigte Spar-Abo Bestellung:
+            # DE digital: Digitale Bestellung, kein </b> dazwischen
+            m = re.search('(?:Digital Order: |Order Placed: *\n *</b>\n) *[A-Za-z]* \d+, (\d{4})',
+                         page_source)
+            order_date = m[1] if m else None
+            if order_date is None and self.dir_per_year:
+                    raise ValueError(f'Failed to get date for order {order_id}')
+            invoice_path = self.get_invoice_path(m[1], order_id)
+            if not os.path.exists(os.path.dirname(invoice_path)):
+                os.makedirs(os.path.dirname(invoice_path))
             with atomic_write(
                     invoice_path, mode='w', encoding='utf-8',
-                    newline='\n') as f:
+                    newline='\n', overwrite=True) as f:
                 # Write with Unicode Byte Order Mark to ensure content will be properly interpreted as UTF-8
                 f.write('\ufeff' + page_source)
             logger.info('  Wrote %s', invoice_path)
