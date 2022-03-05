@@ -26,10 +26,12 @@ The following keys may be specified as part of the configuration dict:
   `'.com'`.
 
 - `regular`: Optional.  Must be a `bool`.  If `True` (the default), download regular orders.
+   For domains other than `amazon_domain=".com"`, `True` downloads regular AND digital orders.
 
 - `digital`: Optional.  Must be a `bool` or `None`.  If `True`, download digital
-  orders.  Defaults to `None`, which is equivalent to `True` for
-  `amazon_domain=".com"`, and `False` for `amazon_domain=".co.uk"`.
+  orders. Effective only for `amazon_domain=".com"`. Defaults to `True` for
+  `amazon_domain=".com"`. For other domains, digital invoices are downloaded
+  tgehter with regular invoices since there is no separate menu on the amazon website.
 
 - `profile_dir`: Optional.  If specified, must be a `str` that specifies the
   path to a persistent Chrome browser profile to use.  This should be a path
@@ -78,6 +80,9 @@ import re
 import logging
 import os
 import time
+import datetime
+import dateutil.parser
+import bs4
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.keys import Keys
@@ -89,94 +94,139 @@ logger = logging.getLogger('amazon_scrape')
 
 
 @dataclasses.dataclass
-class Domain:
-  top_level: str
+class Domain():
+    top_level: str
 
-  sign_in: str
-  sign_out: str
+    sign_in: str
+    sign_out: str
 
-  # Find invoices.
-  your_orders: str
-  invoice: str
-  invoice_link: List[str]
-  order_summary: str
-  order_summary_hidden: bool
-  next: str
+    # Find invoices.
+    your_orders: str
+    invoice: str
+    invoice_link: List[str]
+    order_summary: str
+    order_summary_hidden: bool
+    next: str
 
-  # Confirm invoice page
-  grand_total: str
-  grand_total_digital: str
-  order_cancelled: str
+    # Confirm invoice page
+    grand_total: str
+    grand_total_digital: str
+    order_cancelled: str
 
-  digital_orders: bool
-  digital_orders_text: Optional[str] = None
-  fresh_fallback: Optional[str] = None
+    digital_order: str
+    regular_order_placed: str
+
+    # .COM: digital orders have own order list
+    # other domains: digital orders are in the regular order list
+    digital_orders_menu: bool
+    digital_orders_menu_text: Optional[str] = None
+    
+    fresh_fallback: Optional[str] = None
 
 
-DOT_COM = Domain(
-  top_level='com',
-  sign_in='Sign In',
-  sign_out='Sign Out',
+class DOT_COM(Domain):
+    def __init__(self) -> None:
+        super().__init__(
+            top_level='com',
+            sign_in='Sign In',
+            sign_out='Sign Out',
 
-  your_orders='Your Orders',
-  invoice='Invoice',
-  invoice_link=["View order", "View invoice"],
-  # View invoice -> regular/digital order, View order -> Amazon Fresh
-  fresh_fallback="View order",
-  order_summary='Order Summary',
-  order_summary_hidden=False,
-  next='Next',
+            your_orders='Your Orders',
+            invoice='Invoice',
+            invoice_link=["View order", "View invoice"],
+            # View invoice -> regular/digital order, View order -> Amazon Fresh
+            fresh_fallback="View order",
+            order_summary='Order Summary',
+            order_summary_hidden=False,
+            next='Next',
 
-  grand_total='Grand Total:',
-  grand_total_digital='Grand Total:',
-  order_cancelled='Order Canceled',
+            grand_total='Grand Total:',
+            grand_total_digital='Grand Total:',
+            order_cancelled='Order Canceled',
 
-  digital_orders=True,
-  digital_orders_text='Digital Orders',
-)
+            digital_order='Digital Order: (.*)',
+            regular_order_placed=r'(?:Subscribe and Save )?Order Placed:\s+([^\s]+ \d+, \d{4})',
 
-DOT_CO_UK = Domain(
-  top_level='co.uk',
-  sign_in='Sign in',
-  sign_out='Sign out',
+            digital_orders_menu=True,
+            digital_orders_menu_text='Digital Orders',
+            )
 
-  your_orders='Your Orders',
-  invoice='Invoice',
-  invoice_link=["View order", "View invoice"],
-  # View invoice -> regular/digital order, View order -> Amazon Fresh
-  fresh_fallback="View order",
-  order_summary='Order Summary',
-  order_summary_hidden=False,
-  next='Next',
+    @staticmethod
+    def parse_date(date_str) -> datetime.date:
+        return dateutil.parser.parse(date_str).date()
 
-  grand_total='Grand Total:',
-  grand_total_digital='Grand Total:',
-  order_cancelled='Order Canceled',
+class DOT_CO_UK(Domain):
+    def __init__(self) -> None:
+        super().__init__(
+            top_level='co.uk',
+            sign_in='Sign in',
+            sign_out='Sign out',
 
-  digital_orders=False,
-)
+            your_orders='Your Orders',
+            invoice='Invoice',
+            invoice_link=["View order", "View invoice"],
+            # View invoice -> regular/digital order, View order -> Amazon Fresh
+            fresh_fallback="View order",
+            order_summary='Order Summary',
+            order_summary_hidden=False,
+            next='Next',
 
-DOT_DE = Domain(
-  top_level='de',
-  sign_in='Hallo, Anmelden',
-  sign_out='Abmelden',
+            grand_total='Grand Total:',
+            grand_total_digital='Grand Total:',
+            order_cancelled='Order Canceled',
 
-  your_orders='Meine Bestellungen',
-  invoice='Rechnung',
-  invoice_link=["Bestelldetails anzeigen"],
-  fresh_fallback=None,
-  order_summary='Bestellübersicht',
-  order_summary_hidden=True,
-  next='Weiter',
+            digital_order='Digital Order: (.*)',
+            regular_order_placed=r'(?:Subscribe and Save )?Order Placed:\s+([^\s]+ \d+, \d{4})',
 
-  grand_total='Gesamtsumme:',
-  grand_total_digital='Endsumme:',
-  order_cancelled='Order Canceled',
+            digital_orders_menu=False,
+            )
 
-  digital_orders=False,
-)
+    @staticmethod
+    def parse_date(date_str) -> datetime.date:
+        return dateutil.parser.parse(date_str).date()
 
-DOMAINS = {"." + x.top_level: x for x in [DOT_COM, DOT_CO_UK, DOT_DE]}
+class DOT_DE(Domain):
+    def __init__(self) -> None:
+        super().__init__(
+            top_level='de',
+            sign_in='Hallo, Anmelden',
+            sign_out='Abmelden',
+
+            your_orders='Meine Bestellungen',
+            invoice='Rechnung',
+            invoice_link=["Bestelldetails anzeigen"],
+            fresh_fallback=None,
+            order_summary='Bestellübersicht',
+            order_summary_hidden=True,
+            next='Weiter',
+
+            grand_total='Gesamtsumme:',
+            grand_total_digital='Endsumme:',
+            order_cancelled='Order Canceled',
+
+            digital_order='Digitale Bestellung: (.*)',
+            regular_order_placed=r'(?:Getätigte Spar-Abo-Bestellung|Bestellung aufgegeben am):\s+(\d+\. [^\s]+ \d{4})',
+
+            digital_orders_menu=False,
+            )
+
+    class _parserinfo(dateutil.parser.parserinfo):
+        MONTHS=[
+            ('Jan', 'Januar'), ('Feb', 'Februar'), ('Mär', 'März'),
+            ('Apr', 'April'), ('Mai', 'Mai'), ('Jun', 'Juni'),
+            ('Jul', 'Juli'), ('Aug', 'August'), ('Sep', 'September'),
+            ('Okt', 'Oktober'), ('Nov', 'November'), ('Dez', 'Dezember')
+            ]
+    
+    @staticmethod
+    def parse_date(date_str) -> datetime.date:
+        return dateutil.parser.parse(date_str, parserinfo=DOT_DE._parserinfo(dayfirst=True)).date()
+
+DOMAINS = {
+    ".com": DOT_COM,
+    ".co.uk": DOT_CO_UK, 
+    ".de": DOT_DE
+    }
 
 
 class Scraper(scrape_lib.Scraper):
@@ -193,13 +243,13 @@ class Scraper(scrape_lib.Scraper):
         if amazon_domain not in DOMAINS:
           raise ValueError(f"Domain '{amazon_domain} not supported. Supported "
                            f"domains: {list(DOMAINS)}")
-        self.domain = DOMAINS[amazon_domain]
+        self.domain = DOMAINS[amazon_domain]()
         self.credentials = credentials
         self.output_directory = output_directory
         self.dir_per_year = dir_per_year
         self.logged_in = False
         self.regular = regular
-        self.digital = digital if digital is not None else self.domain.digital_orders
+        self.digital_orders_menu = digital if digital is not None else self.domain.digital_orders_menu
         self.order_groups = order_groups
 
     def check_url(self, url):
@@ -269,7 +319,7 @@ class Scraper(scrape_lib.Scraper):
                 'Failed to parse order ID from href %r' % (href, ))
         return m[1]
 
-    def get_orders(self, regular=True, digital=True):
+    def get_orders(self, regular=True, digital_orders_menu=True):
         invoice_hrefs = []
         order_ids_seen = set()
         order_ids_downloaded = frozenset([
@@ -357,12 +407,10 @@ class Scraper(scrape_lib.Scraper):
                         (order_id, href), = self.wait_and_return(invoice_link_finder_hidden)
                     if order_id:
                         if order_id in order_ids_seen:
-                        logger.info('Skipping already-seen order id: %r',
-                                    order_id)
+                            logger.info('Skipping already-seen order id: %r', order_id)
                             continue
                         if order_id in order_ids_downloaded:
-                            logger.info('Skipping already-downloaded invoice: %r',
-                                    order_id)
+                            logger.info('Skipping already-downloaded invoice: %r', order_id)
                             continue
                         logger.info('Found order \'{}\''.format(order_id))
                         invoice_hrefs.append((href, order_id))
@@ -417,7 +465,9 @@ class Scraper(scrape_lib.Scraper):
 
             retrieve_all_order_groups()
 
-        if digital:
+        if digital_orders_menu:
+            # orders in separate Digital Orders list (relevant for .COM)
+            # other domains list digital orders within the regular order list
             (digital_orders_link,), = self.wait_and_return(
                 lambda: self.find_elements_by_descendant_text_match(f'contains(., "{self.domain.digital_orders_text}")', 'a', only_displayed=True)
             )
@@ -458,16 +508,55 @@ class Scraper(scrape_lib.Scraper):
             page_source, = self.wait_and_return(get_source)
             if order_id not in page_source:
                 raise ValueError(f'Failed to retrieve information for order {order_id}')
-            # extract date
-            # needs some work
-            # DE: Bestellung aufgegeben am: Getätigte Spar-Abo Bestellung:
-            # DE digital: Digitale Bestellung, kein </b> dazwischen
-            m = re.search('(?:Digital Order: |Order Placed: *\n *</b>\n) *[A-Za-z]* \d+, (\d{4})',
-                         page_source)
-            order_date = m[1] if m else None
-            if order_date is None and self.dir_per_year:
+
+            # extract order date
+            def get_date(source, order_id):
+                # code blocks taken from beancount-import/amazon-invoice.py
+                soup=bs4.BeautifulSoup(source, 'lxml')
+
+                def is_order_placed_node(node):
+                    # order placed information in page header (top left)
+                    m = re.fullmatch(self.domain.regular_order_placed, node.text.strip())
+                    return m is not None
+                
+                def is_digital_order_row(node):
+                    # information in heading of order table
+                    if node.name != 'tr':
+                        return False
+                    m = re.match(self.domain.digital_order, node.text.strip())
+                    if m is None:
+                        return False
+                    try:
+                        self.domain.parse_date(m.group(1))
+                        return True
+                    except:
+                        return False
+
+                if order_id.startswith('D'):
+                    # digital order
+                    node = soup.find(is_digital_order_row)
+                    regex = self.domain.digital_order
+                else:
+                    # regular order
+                    node = soup.find(is_order_placed_node)
+                    regex = self.domain.regular_order_placed
+                
+                m = re.fullmatch(regex, node.text.strip())
+                if m is None:
+                    return None
+                order_date = self.domain.parse_date(m.group(1))
+                return order_date
+
+            order_date = get_date(page_source, order_id)
+            if order_date is None: 
+                if self.dir_per_year:
                     raise ValueError(f'Failed to get date for order {order_id}')
-            invoice_path = self.get_invoice_path(m[1], order_id)
+                else:
+                    # date is not necessary, so just log
+                    logger.info(f'Failed to get date for order {order_id}')
+            else:
+                order_date = order_date.year
+            invoice_path = self.get_invoice_path(order_date, order_id)
             if not os.path.exists(os.path.dirname(invoice_path)):
                 os.makedirs(os.path.dirname(invoice_path))
             with atomic_write(
@@ -481,7 +570,10 @@ class Scraper(scrape_lib.Scraper):
         self.login()
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
-        self.get_orders(regular=self.regular, digital=self.digital)
+        self.get_orders(
+            regular=self.regular,
+            digital_orders_menu=self.digital_orders_menu
+            )
 
 
 def run(**kwargs):
