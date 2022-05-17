@@ -68,24 +68,30 @@ transaction_list_schema = {
     'properties': {
         'data': {
             'type': 'object',
-            'required': ['activity'],
+            'required': ['data'],
             'properties': {
-                'activity': {
+                'data': {
                     'type': 'object',
-                    'required': ['transactions'],
+                    'required': ['activity'],
                     'properties': {
-                        'transactions': {
-                            'type': 'array',
-                            'items': {
-                                'type': 'object',
-                                'required': ['id'],
-                                'properties': {
-                                    'id': {
-                                        'type': 'string',
-                                        'pattern': r'^[A-Za-z0-9\-]+$',
-                                    },
+                        'activity': {
+                            'type': 'object',
+                            'required': ['transactions'],
+                            'properties': {
+                                'transactions': {
+                                    'type': 'array',
+                                    'items': {
+                                        'type': 'object',
+                                        'required': ['id'],
+                                        'properties': {
+                                            'id': {
+                                                'type': 'string',
+                                                'pattern': r'^[A-Za-z0-9\-]+$',
+                                            },
+                                        },
+                                    }
                                 },
-                            }
+                            },
                         },
                     },
                 },
@@ -102,9 +108,9 @@ transaction_details_schema = {
     'properties': {
         'data': {
             'type': 'object',
-            'required': ['details'],
+            'required': ['amount'],
             'properties': {
-                'details': {
+                'amount': {
                     'type': 'object',
                 },
             },
@@ -168,9 +174,9 @@ class Scraper(scrape_lib.Scraper):
         logging.info('Getting CSRF token')
         self.driver.get('https://www.paypal.com/myaccount/transactions/')
         # Get CSRF token
-        body_element, = self.wait_and_locate((By.XPATH,
-                                              '//body[@data-token!=""]'))
-        self.csrf_token = body_element.get_attribute('data-token')
+        body_element, = self.wait_and_locate((By.ID, "__react_data__"))
+        attribute_object = json.loads(body_element.get_attribute("data"))
+        self.csrf_token = attribute_object["_csrf"]
         return self.csrf_token
 
     def get_transaction_list(self):
@@ -188,7 +194,7 @@ class Scraper(scrape_lib.Scraper):
         resp.raise_for_status()
         j = resp.json()
         jsonschema.validate(j, transaction_list_schema)
-        return j['data']['activity']['transactions']
+        return j['data']['data']['activity']['transactions']
 
     def save_transactions(self):
         transaction_list = self.get_transaction_list()
@@ -206,7 +212,7 @@ class Scraper(scrape_lib.Scraper):
                     r = self.driver.request('GET', invoice_url)
                     r.raise_for_status()
                     data = r.content
-                    with atomic_write(pdf_path, mode='wb') as f:
+                    with atomic_write(pdf_path, mode='wb', overwrite=True) as f:
                         f.write(data)
                 invoice_json_path = output_prefix + '.invoice.json'
                 if not os.path.exists(invoice_json_path):
@@ -214,7 +220,8 @@ class Scraper(scrape_lib.Scraper):
                             invoice_json_path,
                             mode='w',
                             encoding='utf-8',
-                            newline='\n') as f:
+                            newline='\n',
+                            overwrite=True) as f:
                         f.write(json.dumps(transaction, indent='  '))
                 continue
             details_url = (
@@ -231,7 +238,7 @@ class Scraper(scrape_lib.Scraper):
                 html_resp.raise_for_status()
                 with atomic_write(
                         html_path, mode='w', encoding='utf-8',
-                        newline='\n') as f:
+                        newline='\n', overwrite=True) as f:
                     # Write with Unicode Byte Order Mark to ensure content will be properly interpreted as UTF-8
                     f.write('\ufeff' + html_resp.text)
             if not os.path.exists(json_path):
@@ -240,9 +247,9 @@ class Scraper(scrape_lib.Scraper):
                 json_resp.raise_for_status()
                 j = json_resp.json()
                 jsonschema.validate(j, transaction_details_schema)
-                with atomic_write(json_path, mode='wb') as f:
+                with atomic_write(json_path, mode='wb', overwrite=True) as f:
                     f.write(
-                        json.dumps(j['data']['details'], indent='  ').encode())
+                        json.dumps(j['data'], indent='  ', sort_keys=True).encode())
 
     def run(self):
         if not os.path.exists(self.output_directory):
