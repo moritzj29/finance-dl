@@ -103,29 +103,17 @@ class Scraper(paypal.Scraper):
         # start OTP code
         time.sleep(0.2)
         logger.info('Finding OTP field')
-        totp, = self.wait_and_locate(
-            #(By.XPATH, '//input[@type="tel"]'),
-            (By.ID, 'otpCode'), 
-            only_displayed=True)
-        logger.info('Entering OTP')
+        self.wait_and_locate((By.ID, 'otpCode'),only_displayed=True)
+        fields = self.find_visible_elements(By.XPATH, '//input[@type="number"]')
+        # generate totp code now
+        totp = self.credentials['otp']()
         # send every digit individually and relocate the field in between
-        # page gets refreshed automaitcally and field objects go stale
-        for i in self.credentials['otp']():
-            totp.send_keys(i)
-            totp, = self.wait_and_locate(
-                (By.ID, 'otpCode'), 
-                only_displayed=True)
+        for i, field in enumerate(fields):
+            field.send_keys(totp[i])
+        
         logger.info('Send Enter')
-        # totp.send_keys(Keys.ENTER)
         with self.wait_for_page_load():
-            try:
-                totp.send_keys(Keys.ENTER)
-            except StaleElementReferenceException:
-                totp, = self.wait_and_locate(
-                    #(By.XPATH, '//input[@type="tel"]'),
-                    (By.ID, 'otpCode'), 
-                    only_displayed=True)
-                totp.send_keys(Keys.ENTER)
+            field.send_keys(Keys.ENTER)
         # end OTP code
         logger.info('Logged in')
         self.logged_in = True
