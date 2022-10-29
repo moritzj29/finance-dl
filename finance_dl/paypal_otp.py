@@ -104,7 +104,7 @@ class Scraper(paypal.Scraper):
         time.sleep(0.2)
         logger.info('Finding OTP field')
         self.wait_and_locate((By.ID, 'otpCode'),only_displayed=True)
-        fields = self.find_visible_elements(By.XPATH, '//input[@type="number"]')
+        fields = self.find_visible_elements(By.XPATH, '//input[@type="tel"]')
         # generate totp code now
         totp = self.credentials['otp']()
         # send every digit individually and relocate the field in between
