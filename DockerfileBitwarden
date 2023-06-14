@@ -3,7 +3,7 @@
 FROM node:lts as nodebuild
 # always use lts versions for production (=even version number)
 WORKDIR /build
-RUN npm install -g @bitwarden/cli \
+RUN npm install -g @bitwarden/cli@2023.1.0 \
     && npm install -g pkg \
     && pkg /usr/local/lib/node_modules/@bitwarden/cli --output ./bw
 
