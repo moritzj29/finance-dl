@@ -104,16 +104,18 @@ class Scraper(paypal.Scraper):
         time.sleep(0.2)
         logger.info('Finding OTP field')
         self.wait_and_locate((By.ID, 'otpCode'),only_displayed=True)
-        fields = self.find_visible_elements(By.XPATH, '//input[@type="tel"]')
+        fields = self.find_visible_elements(By.XPATH, '//input[contains(@name, "otpCode")]')
         # generate totp code now
         totp = self.credentials['otp']()
         # send every digit individually and relocate the field in between
         for i, field in enumerate(fields):
             field.send_keys(totp[i])
         
-        logger.info('Send Enter')
+        logger.info('Submit OTP code')
+        button, = self.wait_and_locate(
+            (By.XPATH, '//button[@type="submit"]'), only_displayed=True)
         with self.wait_for_page_load():
-            field.send_keys(Keys.ENTER)
+            button.click()
         # end OTP code
         logger.info('Logged in')
         self.logged_in = True
