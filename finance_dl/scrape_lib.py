@@ -438,7 +438,7 @@ def retry(func, num_tries=3, retry_delay=0):
         time.sleep(retry_delay)
 
 
-def run_with_scraper(scraper_class, **kwargs):
+def run_with_scraper(scraper_class, num_tries=3, retry_delay=0, **kwargs):
     first_call = True
 
     def fetch():
@@ -449,7 +449,7 @@ def run_with_scraper(scraper_class, **kwargs):
         with temp_scraper(scraper_class, **kwargs) as scraper:
             scraper.run()
 
-    retry(fetch)
+    retry(fetch, num_tries=num_tries, retry_delay=retry_delay)
 
 
 @contextlib.contextmanager

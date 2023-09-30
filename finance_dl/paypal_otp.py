@@ -57,7 +57,7 @@ logger = logging.getLogger('paypal_otp')
 
 class Scraper(paypal.Scraper):
     def __init__(self, credentials: dict, output_directory: str, 
-                 chromedriver_args=[], **kwargs):
+                 timeout: int, chromedriver_args=[], **kwargs):
         # based on:
         # https://stackoverflow.com/a/69464060
         # selenium sends a "headless" hint in its User-Agent field
@@ -77,6 +77,8 @@ class Scraper(paypal.Scraper):
             credentials, output_directory,
             chromedriver_args=chromedriver_args, 
             **kwargs)
+        
+        self.timeout=timeout
 
     def login(self):
         if self.logged_in:
@@ -86,7 +88,7 @@ class Scraper(paypal.Scraper):
         time.sleep(0.2)
         logger.info('Finding username field')
         username, = self.wait_and_locate((By.XPATH, '//input[@type="email"]'),
-                                         only_displayed=True)
+                                         only_displayed=True,timeout=self.timeout)
         logger.info('Entering username')
         username.clear()
         username.send_keys(self.credentials['username'])
@@ -94,7 +96,7 @@ class Scraper(paypal.Scraper):
         time.sleep(0.2)
         logger.info('Finding password field')
         password, = self.wait_and_locate(
-            (By.XPATH, '//input[@type="password"]'), only_displayed=True)
+            (By.XPATH, '//input[@type="password"]'), only_displayed=True,timeout=self.timeout)
         logger.info('Entering password')
         password.send_keys(self.credentials['password']())
         with self.wait_for_page_load():
@@ -103,17 +105,19 @@ class Scraper(paypal.Scraper):
         # start OTP code
         time.sleep(0.2)
         logger.info('Finding OTP field')
-        self.wait_and_locate((By.ID, 'otpCode'),only_displayed=True)
-        fields = self.find_visible_elements(By.XPATH, '//input[@type="tel"]')
+        self.wait_and_locate((By.ID, 'otpCode'),only_displayed=True,timeout=self.timeout)
+        fields = self.find_visible_elements(By.XPATH, '//input[contains(@name, "otpCode")]')
         # generate totp code now
         totp = self.credentials['otp']()
         # send every digit individually and relocate the field in between
         for i, field in enumerate(fields):
             field.send_keys(totp[i])
         
-        logger.info('Send Enter')
+        logger.info('Submit OTP code')
+        button, = self.wait_and_locate(
+            (By.XPATH, '//button[@type="submit"]'), only_displayed=True)
         with self.wait_for_page_load():
-            field.send_keys(Keys.ENTER)
+            button.click()
         # end OTP code
         logger.info('Logged in')
         self.logged_in = True
