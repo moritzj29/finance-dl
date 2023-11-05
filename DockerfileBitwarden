@@ -1,6 +1,6 @@
 # build Bitwarden CLI password manager
 # -> no official binary for arm64 platform yet
-FROM node:lts as nodebuild
+FROM node:18 as nodebuild
 # always use lts versions for production (=even version number)
 WORKDIR /build
 RUN npm install -g @bitwarden/cli@2023.1.0 \
