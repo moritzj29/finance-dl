@@ -2,11 +2,28 @@
 # -> no official binary for arm64 platform yet
 FROM node:18 as nodebuild
 # always use lts versions for production (=even version number)
+ARG TARGETPLATFORM
 WORKDIR /build
-RUN npm install -g @bitwarden/cli@2023.1.0 \
-    && npm install -g pkg \
-    && pkg /usr/local/lib/node_modules/@bitwarden/cli --output ./bw
+# does not work anymore since some dependencies are not included in packaged version
+# RUN npm install -g @bitwarden/cli \
+#     && npm install -g pkg \
+#     && pkg /usr/local/lib/node_modules/@bitwarden/cli --output ./bw
+
+# compile bitwarden cli from source and package using package pipeline
+# ongoing PR: https://github.com/bitwarden/clients/pull/2976
+
+# version extraction taken from: https://github.com/tangowithfoxtrot/bw-docker/blob/main/Dockerfile
+RUN apt update && apt install -y curl jq
+RUN export VER=$(curl -H "Accept: application/vnd.github+json" https://api.github.com/repos/bitwarden/clients/releases | jq  -r 'sort_by(.published_at) | reverse | .[].name | select( index("CLI") )' | sed 's:.*CLI v::' | head -n 1) && \
+    curl -LO "https://github.com/bitwarden/clients/archive/refs/tags/cli-v{$VER}.tar.gz" \
+    && mkdir clients && tar -zxf cli-v{$VER}.tar.gz --directory clients && cd clients && npm ci && npm install -g pkg
+    #curl -LO "https://github.com/bitwarden/clients/releases/download/cli-v{$VER}/bw-linux-{$VER}.zip" \
+    #&& unzip *.zip && chmod +x ./bw
+WORKDIR /build/clients/apps/cli
+# elif [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then ARCHITECTURE=arm;
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then ARCHITECTURE=linux-x64; elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then ARCHITECTURE=linux-arm64; else ARCHITECTURE=linux-x64; fi \
+    && npm run build:prod && npm run clean && pkg . --targets {$ARCHITECTURE} --output ./dist/bw
 
 FROM ghcr.io/moritzj29/finance-dl:latest
-COPY --from=nodebuild /build/bw /usr/local/bin/bw
+COPY --from=nodebuild /build/clients/apps/cli/dist/bw /usr/local/bin/bw
 RUN chmod +x /usr/local/bin/bw
