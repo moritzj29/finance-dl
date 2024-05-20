@@ -219,7 +219,7 @@ class DOT_DE(Domain):
             pre_order='Pre-order',
 
             digital_order='Digitale Bestellung: (.*)',
-            regular_order_placed=r'(?:Getätigte Spar-Abo-Bestellung|Bestellung aufgegeben am):\s+(\d+\. [^\s]+ \d{4})',
+            regular_order_placed=r'(?:Getätigte Spar-Abo-Bestellung|Bestellung aufgegeben am|Bestellung Nr. \d+):\s+(\d+\. [^\s]+ \d{4})',
 
             digital_orders_menu=False,
             )
@@ -331,6 +331,11 @@ class Scraper(scrape_lib.Scraper):
     def get_order_id(self, href) -> str:
         m = re.match('.*[&?]orderI[Dd]=((?:D)?[0-9\\-]+)(?:&.*)?$', href)
         if m is None:
+            # in some cases pattern is not orderID=... but e.g. search=...
+            logger.warning("Unable to extract order ID from href by 'orderID=',"
+                           + " falling back to pattern matching only")
+            m = re.match('.*=((?:D)?[0-9\\-]+)(?:&.*)?$', href)
+        if m is None:
             raise RuntimeError(
                 'Failed to parse order ID from href %r' % (href, ))
         return m[1]
@@ -365,7 +370,8 @@ class Scraper(scrape_lib.Scraper):
                 def invoice_finder():
                     # order summary link is visible on page
                     elements_raw = self.driver.find_elements(
-                        By.XPATH, '//a[contains(@href, "orderID=")]')
+                        By.XPATH, '//a[contains(@href, "orderID=") or contains(@href, "search=")]')
+                    # some digital orders have no orderID in href but search for orderID
                     elements = []
                     for invoice_link in elements_raw:
                         if invoice_link.text not in self.domain.invoice_link:
