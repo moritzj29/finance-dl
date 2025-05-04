@@ -1,6 +1,6 @@
 # build Bitwarden CLI password manager
 # -> no official binary for arm64 platform yet
-FROM node:18 as nodebuild
+FROM node:20 AS nodebuild
 # always use lts versions for production (=even version number)
 ARG TARGETPLATFORM
 WORKDIR /build
@@ -16,13 +16,16 @@ WORKDIR /build
 RUN apt update && apt install -y curl jq
 RUN export VER=$(curl -H "Accept: application/vnd.github+json" https://api.github.com/repos/bitwarden/clients/releases | jq  -r 'sort_by(.published_at) | reverse | .[].name | select( index("CLI") )' | sed 's:.*CLI v::' | head -n 1) && \
     curl -LO "https://github.com/bitwarden/clients/archive/refs/tags/cli-v{$VER}.tar.gz" \
-    && mkdir clients && tar -zxf cli-v${VER}.tar.gz --directory clients --strip-components=1 && cd clients && npm install -g npm@latest && npm ci && npm install -g pkg
+    && mkdir clients && tar -zxf cli-v${VER}.tar.gz --directory clients --strip-components=1 && cd clients && npm install -g npm@latest && npm ci
     #curl -LO "https://github.com/bitwarden/clients/releases/download/cli-v{$VER}/bw-linux-{$VER}.zip" \
     #&& unzip *.zip && chmod +x ./bw
 WORKDIR /build/clients/apps/cli
 # elif [ "$TARGETPLATFORM" = "linux/arm/v7" ]; then ARCHITECTURE=arm;
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then ARCHITECTURE=linux-x64; elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then ARCHITECTURE=linux-arm64; else ARCHITECTURE=linux-x64; fi \
-    && npm run build:prod && npm run clean && pkg . --targets ${ARCHITECTURE} --output ./dist/bw
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then ARCHITECTURE=linux-x64 && npm run dist:bit:lin && mv ./dist/bit/linux/bw ./dist/bw; \
+    elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then ARCHITECTURE=linux-arm64 && npm run dist:bit:lin-arm64 && mv ./dist/bit/linux-arm64/bw ./dist/bw; \
+    else ARCHITECTURE=linux-x64; fi
+    # && npm run build:bit:prod && npm run clean && pkg . --targets ${ARCHITECTURE} --output ./dist/bw
+# available scripts: https://github.com/bitwarden/clients/blob/main/apps/cli/package.json
 
 FROM ghcr.io/moritzj29/finance-dl:latest
 COPY --from=nodebuild /build/clients/apps/cli/dist/bw /usr/local/bin/bw
