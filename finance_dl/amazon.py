@@ -409,7 +409,7 @@ class Scraper(scrape_lib.Scraper):
                     order_id=self.get_order_id(invoice_link.get_attribute('href'))
                     
                     # get parent element to search for invoice menu button (has no orderID specified)
-                    parent=invoice_link.find_element(By.XPATH,"./..")
+                    parent=invoice_link.find_element(By.XPATH,"./../..")
                     # leading dot in './/' specifies to only search in children
                     popover=parent.find_elements(By.XPATH,'.//a[contains(@href, "invoice/invoice.html")]')
                     # depending on the order group the XPATH may be different
