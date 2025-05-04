@@ -457,7 +457,7 @@ class Scraper(scrape_lib.Scraper):
                     raise RuntimeError('More than one next link found')
                 with self.wait_for_page_load():
                     logging.info("Next page.")
-                    self.click(next_links[0])
+                    next_links[0].click()
 
         def retrieve_all_order_groups():
             order_select_index = 0
