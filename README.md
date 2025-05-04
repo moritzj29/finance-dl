@@ -132,7 +132,7 @@ Open interactive shell in `finance_dl` container and manually install `finance-d
 If Bitwarden's `data.json` is not present in the specified Bitwarden directory yet (fresh start), start with setting config:
 ```bash
 # only if applicable
-bw server https://bw.example.com
+bw config server https://bw.example.com
 bw login # follow interactive prompts to complete login
 ```
 Now `data.json` should be present and contain encrypted vault data.
@@ -143,9 +143,9 @@ bw unlock
 # set environment variable by copying "export BW_SESSION=..."
 bw sync
 ```
-To populate the config file, it is necessary to find the `id` of the desired item.
+To populate the config file, it is necessary to find the `id` of the desired item. Use `json.tool` to pretty-print the JSON output.
 ```
-bw list items --search Paypal
+bw list items --search Paypal | python -m json.tool
 ```
 For further options check the Bitwarden CLI documentation.
 
