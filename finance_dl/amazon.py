@@ -92,6 +92,7 @@ import bs4
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import TimeoutException
 from atomicwrites import atomic_write
 from . import scrape_lib
 from typing import List, Optional
@@ -417,13 +418,19 @@ class Scraper(scrape_lib.Scraper):
                         popover=parent.find_elements(
                             By.XPATH,
                             f'.//a[contains(text(), {self.domain.invoice}) and @class="a-popover-trigger a-declarative"]')
+                    retry = 0
+                    while retry < 3:
+                        try: 
+                            # open invoice popover to extract invoice link
+                            popover[0].click()
 
-                    # open invoice popover to extract invoice link
-                    popover[0].click()
-
-                    # submenu containing order summary takes some time to load after click
-                    summary_link, = self.wait_and_locate(
-                        (By.XPATH,'//a[contains(@href,"{}") and contains(text(),"{}")]'.format(order_id, self.domain.order_summary)))
+                            # submenu containing order summary takes some time to load after click
+                            summary_link, = self.wait_and_locate(
+                                (By.XPATH,'//a[contains(@href,"{}") and contains(text(),"{}")]'.format(order_id, self.domain.order_summary)))
+                            break
+                        except TimeoutException:
+                            logger.info('Timeout while waiting for invoice popover')
+                            retry +=1
                     if summary_link:
                         href = summary_link.get_attribute('href')
                         return (order_id, href)
